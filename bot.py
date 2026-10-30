@@ -131,6 +131,10 @@ def command(chat, text, state):
     reply(chat, HELP)  # /start, /help and anything unknown
 
 
+RETRIES = 3
+RETRY_DELAY = 5  # seconds, multiplied by attempt number
+
+
 def handle(msg, state):
     chat = msg["chat"]["id"]
     if msg.get("from", {}).get("id") != ALLOWED or msg["chat"]["type"] != "private":
@@ -153,15 +157,19 @@ def handle(msg, state):
         return reply(chat, "Refused: executables and installers are not committed.")
     path = f"{folder}/{time.strftime('%Y%m%d-%H%M%S')}_{msg['message_id']}_{safe(name)}"
     message = caption_for(msg) or f"Add {safe(name)} to {folder} via Telegram"
-    try:
-        info = call(f"{TG}/getFile", {"file_id": file_id})["result"]
-        with urllib.request.urlopen(f"{TG_FILE}/{info['file_path']}", timeout=120) as r:
-            data = r.read()
-        commit(path, data, message)
-        reply(chat, f"Committed {path} ({len(data)} bytes) to {REPO}@{BRANCH}\nMessage: {message}")
-    except Exception as e:  # ponytail: no retries; user just resends
-        print("upload error:", type(e).__name__, e)  # details stay in the local log, not in chat
-        reply(chat, "Upload failed. Check the bot log on the machine it runs on.")
+    for attempt in range(1, RETRIES + 1):  # transient network/GitHub errors: retry, then move on to the next upload
+        try:
+            info = call(f"{TG}/getFile", {"file_id": file_id})["result"]
+            with urllib.request.urlopen(f"{TG_FILE}/{info['file_path']}", timeout=120) as r:
+                data = r.read()
+            commit(path, data, message)
+            return reply(chat, f"Committed {path} ({len(data)} bytes) to {REPO}@{BRANCH}\nMessage: {message}")
+        except Exception as e:
+            print(f"upload error (attempt {attempt}/{RETRIES}):", type(e).__name__, e)  # details stay in the local log
+            if attempt < RETRIES:
+                time.sleep(RETRY_DELAY * attempt)
+    state.setdefault("failed", []).append(path)  # kept in state.json for a manual resend
+    reply(chat, f"Upload failed after {RETRIES} tries: {safe(name)}. Resend it later; the next uploads continue.")
 
 
 def check_repo():
