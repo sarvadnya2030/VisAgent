@@ -138,6 +138,9 @@ def handle(msg, state):
     text = (msg.get("text") or "").strip()
     if text.startswith("/"):
         return command(chat, text, state)
+    if "photo" in msg:
+        # Telegram re-encodes photos on upload; only the file upload keeps full quality.
+        return reply(chat, "Telegram compressed this photo. Resend it as a File (attach > File) to keep full quality.")
     file_id, name, size = pick_file(msg)
     if not file_id:
         return reply(chat, HELP)
